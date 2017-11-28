@@ -111,12 +111,12 @@ the actual mounting of the FUSE filesystem.
 
 The compilation of the plugin/FUES filesystem is specific to operating
 system on which the Kubernetes cluster is deployed. For example, on
-RHEL, CentOS, and Fedora, `gcc`, `fuse-devel`, and `json-c-devel`
-packages need to be installed (presumably via `yum` or `dnf`). Then
-the source code can be compiled with
+RHEL, CentOS, and Fedora, `gcc`, `libselinux-devel`, `fuse-devel`,
+and `json-c-devel` packages need to be installed (presumably via `yum`
+or `dnf`). Then the source code can be compiled with
 
 ```
-gcc -Wall pod-info-fuse.c $( pkg-config fuse json-c --cflags --libs) \
+gcc -Wall pod-info-fuse.c $( pkg-config libselinux fuse json-c --cflags --libs) \
     -o pod-info-fuse
 ```
 

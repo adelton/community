@@ -3,7 +3,7 @@
   and pid (in host PID namespace).
   Author: Jan Pazdziora
 
-  gcc -Wall pod-info-fuse.c $( pkg-config fuse json-c --cflags --libs ) \
+  gcc -Wall pod-info-fuse.c $( pkg-config libselinux fuse json-c --cflags --libs ) \
       -D LOG_FILE=/tmp/pod-info.log \
       -o /usr/libexec/kubernetes/kubelet-plugins/volume/exec/example.com~pod-info-fuse/pod-info-fuse
 */
@@ -17,6 +17,7 @@
 #include <sys/wait.h>
 #include <sys/utsname.h>
 #include <time.h>
+#include <selinux/selinux.h>
 
 #define FUSE_USE_VERSION 29
 
@@ -40,6 +41,7 @@ static const char * pod_uid = NULL;
 static const char * pod_uid_path = "/pod.uid";
 static const char * pod_nodename_path = "/pod.nodename";
 static const char * host_pid_path = "/pid";
+static const char * host_pid_selinux_path = "/pid.selinux";
 
 static int pod_info_readdir(const char * path, void * dir,
 		fuse_fill_dir_t filler,
@@ -52,13 +54,15 @@ static int pod_info_readdir(const char * path, void * dir,
 	filler(dir, pod_uid_path + 1, NULL, 0);
 	filler(dir, pod_nodename_path + 1, NULL, 0);
 	filler(dir, host_pid_path + 1, NULL, 0);
+	filler(dir, host_pid_selinux_path + 1, NULL, 0);
 	return 0;
 }
 
 static int pod_info_open(const char * path, struct fuse_file_info * fi) {
 	if (strcmp(path, pod_uid_path)
 		&& strcmp(path, pod_nodename_path)
-		&& strcmp(path, host_pid_path)) {
+		&& strcmp(path, host_pid_path)
+		&& strcmp(path, host_pid_selinux_path)) {
 		return -ENOENT;
 	}
 	if ((fi->flags & 3) != O_RDONLY) {
@@ -93,6 +97,17 @@ static int pod_info_getattr(const char * path, struct stat * stinfo) {
 			char buf[3];
 			stinfo->st_size = snprintf(buf, 3, "%d\n", info->pid);
 		}
+	} else if (strcmp(path, host_pid_selinux_path) == 0) {
+		stinfo->st_mode = S_IFREG | 0444;
+		stinfo->st_nlink = 1;
+		struct fuse_context * info = fuse_get_context();
+		if (info) {
+			char * context;
+			if (getpidcon(info->pid, &context) == 0) {
+				stinfo->st_size = strlen(context) + 1;
+				freecon(context);
+			}
+		}
 	} else {
 		return -ENOENT;
 	}
@@ -118,6 +133,13 @@ static int pod_info_read(const char * path, char * buf,
 				need_free = 1;
 			}
 		}
+	} else if (strcmp(path, host_pid_selinux_path) == 0) {
+		struct fuse_context * info = fuse_get_context();
+		if (info) {
+			if (getpidcon(info->pid, &value) == 0) {
+				need_free = 2;
+			}
+		}
 	}
 	if (value) {
 		len = strlen(value) + 1;
@@ -128,12 +150,16 @@ static int pod_info_read(const char * path, char * buf,
 			if (size > strlen(value + offset)) {
 				buf[size - 1] = '\n';
 			}
-			if (need_free) {
+			if (need_free == 2) {
+				freecon(value);
+			} else if (need_free) {
 				free(value);
 			}
 			return size;
 		}
-		if (need_free) {
+		if (need_free == 2) {
+			freecon(value);
+		} else if (need_free) {
 			free(value);
 		}
 		return 0;
